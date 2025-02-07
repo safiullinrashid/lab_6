@@ -1,0 +1,52 @@
+#include <stdio.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <time.h>
+#include <stdlib.h>
+
+void print_time() {
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);  // Получаем текущее время
+    struct tm *tm = localtime(&ts.tv_sec);  // Преобразуем в читаемый формат
+    printf("Текущее время: %02d:%02d:%02d:%03ld\n",
+           tm->tm_hour, tm->tm_min, tm->tm_sec, ts.tv_nsec / 1000000);
+}
+
+int main() {
+    pid_t pid1, pid2;
+
+    // Первый вызов fork()
+    pid1 = fork();
+    if (pid1 == 0) {
+        // Дочерний процесс 1
+        printf("Дочерний процесс 1: pid=%d, ppid=%d\n", getpid(), getppid());
+        print_time();
+        exit(0);  // Завершаем дочерний процесс
+    } else if (pid1 > 0) {
+        // Родительский процесс
+        pid2 = fork();  // Второй вызов fork()
+        if (pid2 == 0) {
+            // Дочерний процесс 2
+            printf("Дочерний процесс 2: pid=%d, ppid=%d\n", getpid(), getppid());
+            print_time();
+            exit(0);  // Завершаем дочерний процесс
+        } else if (pid2 > 0) {
+            // Родительский процесс
+            printf("Родительский процесс: pid=%d, ppid=%d\n", getpid(), getppid());
+            print_time();
+
+            // Выполнение команды ps -x
+            printf("\nВыполнение команды ps -x:\n");
+            system("ps -x");
+        } else {
+            perror("Ошибка при втором вызове fork()");
+            exit(1);
+        }
+    } else {
+        perror("Ошибка при первом вызове fork()");
+        exit(1);
+    }
+
+    return 0;
+}
