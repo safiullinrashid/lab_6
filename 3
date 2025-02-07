@@ -1,71 +1,151 @@
 #include <stdio.h>
-#include <unistd.h>
-#include <sys/types.h>
-#include <sys/wait.h>
-#include <time.h>
 #include <stdlib.h>
+#include <string.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <dirent.h>
+#include <fcntl.h>
+#include <sys/wait.h>
 
-void print_info(int process_number) {
-    struct timespec ts;
-    clock_gettime(CLOCK_REALTIME, &ts);
-    struct tm *tm = localtime(&ts.tv_sec);
-    printf("Процесс %d: pid=%d, ppid=%d, время: %02d:%02d:%02d:%03ld\n",
-           process_number, getpid(), getppid(),
-           tm->tm_hour, tm->tm_min, tm->tm_sec, ts.tv_nsec / 1000000);
+#define MAX_PATH 1024
+#define MAX_PROCESSES 10
+
+// Структура для хранения информации о файле
+typedef struct {
+    char path[MAX_PATH];
+    struct stat file_stat;
+} FileInfo;
+
+// Функция для рекурсивного обхода каталога и сбора информации о файлах
+void traverse_directory(const char *dir_path, FileInfo **files, int *count) {
+    DIR *dir;
+    struct dirent *entry;
+    char full_path[MAX_PATH];
+
+    if ((dir = opendir(dir_path)) == NULL) {
+        perror("opendir");
+        return;
+    }
+
+    while ((entry = readdir(dir)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+
+        snprintf(full_path, MAX_PATH, "%s/%s", dir_path, entry->d_name);
+
+        struct stat st;
+        if (lstat(full_path, &st) == -1) {
+            perror("lstat");
+            continue;
+        }
+
+        if (S_ISDIR(st.st_mode)) {
+            traverse_directory(full_path, files, count);
+        } else if (S_ISREG(st.st_mode)) {
+            *files = realloc(*files, (*count + 1) * sizeof(FileInfo));
+            strncpy((*files)[*count].path, full_path, MAX_PATH);
+            (*files)[*count].file_stat = st;
+            (*count)++;
+        }
+    }
+
+    closedir(dir);
 }
 
-void process_function(int process_number) {
-    int sleep_time = process_number * 200;  // Время сна в мс
-    while (1) {
-        print_info(process_number);
-        usleep(sleep_time * 1000);  // Переводим мс в микросекунды
+// Функция для сравнения содержимого файлов
+void compare_files(const char *file1, const char *file2) {
+    FILE *f1 = fopen(file1, "rb");
+    FILE *f2 = fopen(file2, "rb");
+
+    if (f1 == NULL || f2 == NULL) {
+        perror("fopen");
+        return;
     }
+
+    int bytes_read = 0;
+    char buf1[1024], buf2[1024];
+    size_t n1, n2;
+
+    do {
+        n1 = fread(buf1, 1, sizeof(buf1), f1);
+        n2 = fread(buf2, 1, sizeof(buf2), f2);
+        bytes_read += n1;
+
+        if (n1 != n2 || memcmp(buf1, buf2, n1) != 0) {
+            printf("PID: %d, File: %s, Bytes read: %d, Result: Files differ\n", getpid(), file1, bytes_read);
+            fclose(f1);
+            fclose(f2);
+            return;
+        }
+    } while (n1 > 0);
+
+    printf("PID: %d, File: %s, Bytes read: %d, Result: Files are identical\n", getpid(), file1, bytes_read);
+
+    fclose(f1);
+    fclose(f2);
 }
 
 int main() {
-    printf("Родительский процесс P1: pid=%d\n", getpid());
+    char dir1[MAX_PATH], dir2[MAX_PATH];
+    int max_processes;
 
-    // Создание процессов P2 и P3
-    pid_t p2 = fork();
-    if (p2 == 0) {
-        // Процесс P2
-        pid_t p4 = fork();
-        if (p4 == 0) {
-            process_function(4);
-            exit(0);
+    // Ввод данных от пользователя
+    printf("Enter Dir1: ");
+    scanf("%s", dir1);
+    printf("Enter Dir2: ");
+    scanf("%s", dir2);
+    printf("Enter maximum number of processes: ");
+    scanf("%d", &max_processes);
+
+    FileInfo *files1 = NULL, *files2 = NULL;
+    int count1 = 0, count2 = 0;
+
+    // Сбор информации о файлах в первом каталоге
+    traverse_directory(dir1, &files1, &count1);
+
+    // Сбор информации о файлах во втором каталоге
+    traverse_directory(dir2, &files2, &count2);
+
+    // Очередь для хранения PID'ов процессов
+    pid_t pids[MAX_PROCESSES];
+    int current_processes = 0;
+
+    // Поиск совпадающих файлов
+    for (int i = 0; i < count1; i++) {
+        for (int j = 0; j < count2; j++) {
+            if (files1[i].file_stat.st_size == files2[j].file_stat.st_size) {
+                // Ожидание завершения одного из процессов, если достигнут лимит
+                if (current_processes >= max_processes) {
+                    wait(NULL);
+                    current_processes--;
+                }
+
+                pid_t pid = fork();
+                if (pid == 0) {
+                    // Дочерний процесс
+                    compare_files(files1[i].path, files2[j].path);
+                    exit(0);
+                } else if (pid > 0) {
+                    // Родительский процесс
+                    pids[current_processes++] = pid;
+                } else {
+                    perror("fork");
+                }
+            }
         }
-
-        pid_t p5 = fork();
-        if (p5 == 0) {
-            process_function(5);
-            exit(0);
-        }
-
-        process_function(2);
-        exit(0);
     }
 
-    pid_t p3 = fork();
-    if (p3 == 0) {
-        // Процесс P3
-        pid_t p6 = fork();
-        if (p6 == 0) {
-            process_function(6);
-            exit(0);
-        }
-
-        pid_t p7 = fork();
-        if (p7 == 0) {
-            process_function(7);
-            exit(0);
-        }
-
-        process_function(3);
-        exit(0);
+    // Ожидание завершения всех дочерних процессов
+    while (current_processes > 0) {
+        wait(NULL);
+        current_processes--;
     }
 
-    // Родительский процесс ожидает завершения всех дочерних процессов
-    while (wait(NULL) > 0);
+    // Освобождение памяти
+    free(files1);
+    free(files2);
 
     return 0;
 }
