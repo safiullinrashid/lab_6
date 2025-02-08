@@ -58,13 +58,13 @@ int main(void) {
     int N;
 
     printf("Введите имя первого каталога (Dir1): ");
-    if (scanf("%511s", dir1) != 1) {
+    if (scanf("%255s", dir1) != 1) {
         fprintf(stderr, "Ошибка ввода каталога\n");
         exit(EXIT_FAILURE);
     }
 
     printf("Введите имя второго каталога (Dir2): ");
-    if (scanf("%511s", dir2) != 1) {
+    if (scanf("%255s", dir2) != 1) {
         fprintf(stderr, "Ошибка ввода каталога\n");
         exit(EXIT_FAILURE);
     }
